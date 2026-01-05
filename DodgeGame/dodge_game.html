@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Dodge Game with Guns & Inventory</title>
+<style>
+  body { margin: 0; background: #111; display: flex; justify-content: center; align-items: center; height: 100vh; }
+  canvas { background: #000; border: 4px solid #0f0; cursor: pointer; }
+  #devConsole {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 400px;
+    padding: 20px;
+    background: #000;
+    border: 3px solid #0f0;
+    color: #0f0;
+    font-family: monospace;
+    font-size: 18px;
+    display: none;
+    flex-direction: column;
+    gap: 15px;
+    box-shadow: 0 0 20px #0f0;
+    z-index: 100;
+  }
+  #devConsole input {
+    background: #111;
+    border: 1px solid #0f0;
+    color: #0f0;
+    padding: 10px;
+    font-family: monospace;
+    font-size: 16px;
+  }
+  #devConsole button {
+    background: #0f0;
+    color: #000;
+    border: none;
+    padding: 10px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<audio id="bgMusic" loop src="music.mp3"></audio>
+<audio id="scoreSound" src="score.wav"></audio>
+<canvas id="canvas" width="800" height="600"></canvas>
+
+<!-- Developer Console -->
+<div id="devConsole">
+  <div style="text-align:center; font-size:22px;">DEVELOPER CONSOLE</div>
+  <div>Enter amount of coins to add:</div>
+  <input type="number" id="coinInput" placeholder="e.g. 5000" min="1">
+  <div style="display:flex; gap:10px; margin-top:10px;">
+    <button id="addCoinsBtn">ADD COINS</button>
+    <button id="closeDevBtn">CLOSE</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const bgMusic = document.getElementById("bgMusic");
+const scoreSound = document.getElementById("scoreSound");
+const devConsole = document.getElementById("devConsole");
+const coinInput = document.getElementById("coinInput");
+const addCoinsBtn = document.getElementById("addCoinsBtn");
+const closeDevBtn = document.getElementById("closeDevBtn");
+
+// ---------- GAME STATE ----------
+let state = "start";
+let playerX = 20;
+let score = 0;
+let coins = 0;
+let enemies = [];
+let bullets = [];
+let moveSpeed = 1;
+let playerHat = null;
+let inventory = [];
+let buttons = [];
+let inventoryButtons = [];
+let audioUnlocked = false;
+
+// ---------- GUNS ----------
+let currentGun = { name: "Pistol", shootCooldown: 300 };
+let canShoot = true;
+
+// ---------- ENEMY SETTINGS ----------
+let spawnRate = 0.01;
+let spawnIncreaseRate = 0.00002;
+let enemySpeedMultiplier = 1;
+let speedIncreaseRate = 0.00002;
+let maxEnemies = 10;
+
+// ---------- AUDIO ----------
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  bgMusic.volume = 0.5;
+  bgMusic.play().catch(()=>{});
+}
+document.addEventListener("click", unlockAudio, {once:true});
+
+// ---------- SAVE / LOAD ----------
+function saveProgress() {
+  const data = { coins, inventory, moveSpeed, playerHat, currentGun };
+  localStorage.setItem("dodgeGameData", JSON.stringify(data));
+}
+function loadProgress() {
+  const saved = localStorage.getItem("dodgeGameData");
+  if (!saved) return;
+  const data = JSON.parse(saved);
+  coins = data.coins ?? 0;
+  moveSpeed = data.moveSpeed ?? 1;
+  playerHat = data.playerHat ?? null;
+  currentGun = data.currentGun ?? { name: "Pistol", shootCooldown: 300 };
+  inventory = (data.inventory || []).map(i => {
+    if (i.type === "boost") return { name: i.name, type: i.type, action: () => { moveSpeed = 2; } };
+    if (i.type === "hat") return { name: i.name, type: i.type, action: () => { playerHat = { name: i.name }; } };
+    if (i.type === "gun") {
+      return { name: i.name, type: i.type, shootCooldown: i.shootCooldown, action: () => { currentGun = { name: i.name, shootCooldown: i.shootCooldown }; } };
+    }
+    return i;
+  });
+}
+
+// ---------- DEVELOPER CONSOLE ----------
+let passwordPromptActive = false;
+
+function openDevConsole() {
+  devConsole.style.display = "flex";
+  coinInput.value = "";
+  coinInput.focus();
+}
+
+addCoinsBtn.onclick = () => {
+  const amount = parseInt(coinInput.value);
+  if (!isNaN(amount) && amount > 0) {
+    coins += amount;
+    saveProgress();
+    alert(`Added ${amount} coins!\nTotal coins: ${coins}`);
+    coinInput.value = "";
+  } else {
+    alert("Please enter a valid positive number.");
+  }
+};
+
+closeDevBtn.onclick = () => {
+  devConsole.style.display = "none";
+};
+
+document.addEventListener("keydown", e => {
+  if (e.key.toLowerCase() === "p" && state !== "playing" && state !== "paused" && !passwordPromptActive) {
+    passwordPromptActive = true;
+    const pass = prompt("Enter developer password:");
+    passwordPromptActive = false;
+    if (pass === "xai") {
+      openDevConsole();
+    } else if (pass !== null) {
+      alert("Incorrect password.");
+    }
+  }
+});
+
+// ---------- PAUSE ----------
+function togglePause() {
+  if (state === "playing") state = "paused";
+  else if (state === "paused") state = "playing";
+}
+
+function quitToMenu() {
+  endGame();
+}
+
+// ---------- GAME ----------
+function startGame() {
+  playerX = 20;
+  score = 0;
+  enemies = [];
+  bullets = [];
+  spawnRate = 0.01;
+  enemySpeedMultiplier = 1;
+  state = "playing";
+  buttons = [];
+  bgMusic.currentTime = 0;
+  bgMusic.play().catch(()=>{});
+}
+
+function endGame() {
+  state = "gameover";
+  coins += score;
+  saveProgress();
+  bgMusic.pause();
+  setupGameOver();
+}
+
+function spawnEnemy() {
+  const hatTypes = ["cap","wizard","crown","spikyHair","mohawk"];
+  const colors = ["#f00","#00f","#ff0","#0ff","#0f0"];
+  enemies.push({
+    x: Math.floor(Math.random()*40),
+    y: 0,
+    speed: (Math.random()*0.2 + 0.1) * enemySpeedMultiplier,
+    hatType: hatTypes[Math.floor(Math.random()*hatTypes.length)],
+    hatColor: colors[Math.floor(Math.random()*colors.length)]
+  });
+}
+
+function updateEnemies() {
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    let e = enemies[i];
+    e.y += e.speed;
+
+    const enemyTop = e.y * 20;
+    const enemyBottom = enemyTop + 20;
+    const playerLeft = playerX * 20;
+    const playerRight = playerLeft + 20;
+    const playerTop = 560;
+    const playerBottom = 580;
+
+    if (e.x * 20 + 20 > playerLeft && e.x * 20 < playerRight &&
+        enemyBottom > playerTop && enemyTop < playerBottom) {
+      endGame();
+      return;
+    }
+
+    if (enemyTop > 600) enemies.splice(i, 1);
+  }
+}
+
+function shoot() {
+  if (!canShoot) return;
+  if (currentGun.name === "Shotgun") {
+    bullets.push({x: playerX * 20 + 5, y: 560, speed: 6});
+    bullets.push({x: playerX * 20 + 10, y: 560, speed: 6});
+    bullets.push({x: playerX * 20 + 15, y: 560, speed: 6});
+  } else if (currentGun.name === "Minigun") {
+    bullets.push({x: playerX * 20 + 10, y: 560, speed: 8});
+  } else {
+    bullets.push({x: playerX * 20 + 10, y: 560, speed: 6});
+  }
+  canShoot = false;
+  setTimeout(() => canShoot = true, currentGun.shootCooldown);
+}
+
+function updateBullets() {
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    bullets[i].y -= bullets[i].speed;
+    if (bullets[i].y < 0) bullets.splice(i, 1);
+  }
+}
+
+function drawBullets() {
+  ctx.fillStyle = "#ff0";
+  bullets.forEach(b => ctx.fillRect(b.x - 2, b.y - 10, 4, 10));
+}
+
+function checkBulletHits() {
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const e = enemies[j];
+      if (bullets[i].x > e.x * 20 && bullets[i].x < e.x * 20 + 20 &&
+          bullets[i].y > e.y * 20 && bullets[i].y < e.y * 20 + 20) {
+        bullets.splice(i, 1);
+        enemies.splice(j, 1);
+        score++;
+        coins++;
+        scoreSound.currentTime = 0;
+        scoreSound.play().catch(()=>{});
+        break;
+      }
+    }
+  }
+}
+
+function drawPlayer() {
+  const x = playerX * 20, y = 560;
+  ctx.fillStyle = "#ffe0bd"; ctx.fillRect(x, y, 20, 20);
+  ctx.fillStyle = "#000"; ctx.fillRect(x+4, y+4, 3, 3); ctx.fillRect(x+13, y+4, 3, 3);
+  ctx.fillStyle = "#900"; ctx.fillRect(x+6, y+11, 8, 2);
+
+  if (playerHat) {
+    switch (playerHat.name) {
+      case "Baseball Cap": ctx.fillStyle="#f00"; ctx.fillRect(x,550,20,6); ctx.fillRect(x+2,556,16,2); break;
+      case "Wizard Hat": ctx.fillStyle="#00f"; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+10,540); ctx.lineTo(x+20,y); ctx.closePath(); ctx.fill(); break;
+      case "Crown": ctx.fillStyle="#ff0"; ctx.fillRect(x,550,20,4); ctx.fillRect(x+2,546,4,4); ctx.fillRect(x+8,546,4,4); ctx.fillRect(x+14,546,4,4); break;
+    }
+  }
+
+  switch(currentGun.name){
+    case "Pistol": ctx.fillStyle="#ff0"; ctx.fillRect(x+5, y-10, 10, 4); break;
+    case "Rifle": ctx.fillStyle="#0f0"; ctx.fillRect(x+2, y-12, 16, 5); break;
+    case "Shotgun": ctx.fillStyle="#f0f"; ctx.fillRect(x, y-12, 20, 6); break;
+    case "Minigun": ctx.fillStyle="#0ff"; ctx.fillRect(x-2, y-14, 24, 6); break;
+  }
+}
+
+function drawEnemies() {
+  enemies.forEach(e => {
+    const x = e.x * 20, y = e.y * 20;
+    ctx.fillStyle = "#ffe0bd"; ctx.fillRect(x, y, 20, 20);
+    ctx.fillStyle = "#000"; ctx.fillRect(x+4,y+4,3,3); ctx.fillRect(x+13,y+4,3,3);
+    ctx.fillStyle = "#900"; ctx.fillRect(x+6,y+11,8,2);
+    ctx.fillStyle = e.hatColor || "#00f";
+    switch(e.hatType){
+      case "cap": ctx.fillRect(x,y-6,20,6); ctx.fillRect(x+2,y,16,2); break;
+      case "wizard": ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+10,y-20); ctx.lineTo(x+20,y); ctx.closePath(); ctx.fill(); break;
+      case "crown": ctx.fillRect(x,y-4,20,4); ctx.fillRect(x+2,y-8,4,4); ctx.fillRect(x+8,y-8,4,4); ctx.fillRect(x+14,y-8,4,4); break;
+      case "spikyHair": ctx.fillStyle="#f90"; ctx.fillRect(x,y-4,20,4); break;
+      case "mohawk": ctx.fillStyle="#f0f"; ctx.fillRect(x+8,y-8,4,8); break;
+    }
+  });
+}
+
+function drawButton(b) {
+  ctx.fillStyle = b.hover ? "#0f0" : "#222";
+  ctx.fillRect(b.x, b.y, b.w, b.h);
+  ctx.strokeStyle = "#0f0";
+  ctx.strokeRect(b.x, b.y, b.w, b.h);
+  ctx.fillStyle = "#fff";
+  ctx.font = "18px monospace";
+  ctx.textAlign = "left";
+  ctx.fillText(b.text, b.x + 12, b.y + 32);
+  if (b.status) {
+    ctx.textAlign = "right";
+    ctx.fillText(b.status, b.x + b.w - 12, b.y + 32);
+    ctx.textAlign = "left";
+  }
+}
+
+// ---------- MENUS ----------
+function setupGameOver() {
+  buttons = [
+    {x:300, y:360, w:200, h:50, text:"PLAY AGAIN", action:startGame},
+    {x:300, y:430, w:200, h:50, text:"SHOP", action:()=>{state="shop";setupShop();}},
+    {x:300, y:500, w:200, h:50, text:"INVENTORY", action:()=>{state="inventory";setupInventory();}}
+  ];
+}
+
+function setupShop() {
+  buttons = [
+    {x:200, y:120, w:400, h:50, text:"Pistol (default)", action:()=>{currentGun={name:"Pistol",shootCooldown:300};saveProgress();}},
+    {x:200, y:180, w:400, h:50, text:"Rifle (50 coins)", action:()=>{if(inventory.find(i=>i.name==="Rifle")||coins<50)return;inventory.push({name:"Rifle",type:"gun",shootCooldown:200,action:()=>{currentGun={name:"Rifle",shootCooldown:200};}});currentGun={name:"Rifle",shootCooldown:200};coins-=50;saveProgress();}},
+    {x:200, y:240, w:400, h:50, text:"Shotgun (70 coins)", action:()=>{if(inventory.find(i=>i.name==="Shotgun")||coins<70)return;inventory.push({name:"Shotgun",type:"gun",shootCooldown:500,action:()=>{currentGun={name:"Shotgun",shootCooldown:500};}});currentGun={name:"Shotgun",shootCooldown:500};coins-=70;saveProgress();}},
+    {x:200, y:300, w:400, h:50, text:"Minigun (1000 coins)", action:()=>{if(inventory.find(i=>i.name==="Minigun")||coins<1000)return;inventory.push({name:"Minigun",type:"gun",shootCooldown:50,action:()=>{currentGun={name:"Minigun",shootCooldown:50};}});currentGun={name:"Minigun",shootCooldown:50};coins-=1000;saveProgress();}},
+    {x:200, y:360, w:400, h:50, text:"Speed Boost (20 coins)", action:()=>{if(inventory.find(i=>i.name==="Speed Boost")||coins<20)return;inventory.push({name:"Speed Boost",type:"boost",action:()=>moveSpeed=2});moveSpeed=2;coins-=20;saveProgress();}},
+    {x:200, y:420, w:400, h:50, text:"Baseball Cap (5 coins)", action:()=>{if(inventory.find(i=>i.name==="Baseball Cap")||coins<5)return;inventory.push({name:"Baseball Cap",type:"hat",action:()=>playerHat={name:"Baseball Cap"}});playerHat={name:"Baseball Cap"};coins-=5;saveProgress();}},
+    {x:200, y:480, w:400, h:50, text:"Wizard Hat (8 coins)", action:()=>{if(inventory.find(i=>i.name==="Wizard Hat")||coins<8)return;inventory.push({name:"Wizard Hat",type:"hat",action:()=>playerHat={name:"Wizard Hat"}});playerHat={name:"Wizard Hat"};coins-=8;saveProgress();}},
+    {x:300, y:540, w:200, h:40, text:"BACK", action:()=>{state="gameover";setupGameOver();}}
+  ];
+}
+
+function setupInventory() {
+  inventoryButtons = inventory.map((item, i) => {
+    const isEquipped = 
+      (item.type === "gun" && currentGun.name === item.name) ||
+      (item.type === "hat" && playerHat?.name === item.name) ||
+      (item.type === "boost" && moveSpeed > 1 && item.name === "Speed Boost");
+    return {
+      x: 150,
+      y: 120 + i * 60,
+      w: 500,
+      h: 50,
+      text: item.name,
+      status: isEquipped ? "EQUIPPED" : "CLICK TO EQUIP",
+      action: () => {
+        item.action();
+        saveProgress();
+        setupInventory();
+      }
+    };
+  });
+
+  buttons = [{
+    x: 300,
+    y: 520,
+    w: 200,
+    h: 50,
+    text: "BACK",
+    action: () => { state = "gameover"; setupGameOver(); }
+  }];
+}
+
+function drawPauseMenu() {
+  ctx.fillStyle = "rgba(0,0,0,0.75)";
+  ctx.fillRect(0, 0, 800, 600);
+
+  ctx.fillStyle = "#0f0";
+  ctx.font = "50px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("PAUSED", 400, 200);
+
+  buttons = [
+    {x:300, y:280, w:200, h:50, text:"RESUME", action:togglePause},
+    {x:300, y:350, w:200, h:50, text:"QUIT TO MENU", action:quitToMenu}
+  ];
+
+  buttons.forEach(drawButton);
+  ctx.textAlign = "left";
+}
+
+// ---------- LOOP ----------
+function loop() {
+  ctx.clearRect(0, 0, 800, 600);
+
+  if (state === "playing" || state === "paused") {
+    drawPlayer();
+    drawEnemies();
+    drawBullets();
+
+    if (state === "playing") {
+      updateEnemies();
+      updateBullets();
+      checkBulletHits();
+      if (Math.random() < spawnRate && enemies.length < maxEnemies) spawnEnemy();
+      spawnRate += spawnIncreaseRate;
+      enemySpeedMultiplier += speedIncreaseRate;
+    }
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "20px monospace";
+    ctx.fillText("Score: " + score, 10, 30);
+    ctx.fillText("Coins: " + coins, 160, 30);  // Moved to the right!
+
+    if (state === "paused") {
+      drawPauseMenu();
+    }
+  } else if (state === "gameover") {
+    ctx.fillStyle = "#f00";
+    ctx.font = "60px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("GAME OVER", 400, 200);
+    ctx.fillStyle = "#fff";
+    ctx.font = "30px monospace";
+    ctx.fillText("Score: " + score, 400, 270);
+    ctx.fillText("Total Coins: " + coins, 400, 320);
+    ctx.textAlign = "left";
+    buttons.forEach(drawButton);
+  } else if (state === "shop") {
+    ctx.fillStyle = "#0f0";
+    ctx.font = "50px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("SHOP", 400, 70);
+    ctx.fillStyle = "#fff";
+    ctx.font = "24px monospace";
+    ctx.fillText("Coins: " + coins, 30, 40);
+    ctx.textAlign = "left";
+    buttons.forEach(drawButton);
+  } else if (state === "inventory") {
+    ctx.fillStyle = "#0f0";
+    ctx.font = "50px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("INVENTORY", 400, 70);
+    ctx.fillStyle = "#fff";
+    ctx.font = "24px monospace";
+    ctx.fillText("Coins: " + coins, 30, 40);
+    ctx.textAlign = "left";
+
+    inventoryButtons.forEach(drawButton);
+    buttons.forEach(drawButton);
+  } else {
+    ctx.fillStyle = "#0f0";
+    ctx.font = "50px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("DODGE GAME", 400, 280);
+    ctx.font = "28px monospace";
+    ctx.fillText("Click to Start", 400, 340);
+    ctx.textAlign = "left";
+  }
+
+  requestAnimationFrame(loop);
+}
+
+// ---------- INPUT ----------
+canvas.addEventListener("mousemove", e => {
+  const r = canvas.getBoundingClientRect();
+  const mx = e.clientX - r.left;
+  const my = e.clientY - r.top;
+
+  buttons.forEach(b => b.hover = mx > b.x && mx < b.x + b.w && my > b.y && my < b.y + b.h);
+
+  if (state === "inventory") {
+    inventoryButtons.forEach(b => b.hover = mx > b.x && mx < b.x + b.w && my > b.y && my < b.y + b.h);
+  }
+});
+
+canvas.addEventListener("click", e => {
+  if (state === "start") {
+    startGame();
+    return;
+  }
+
+  buttons.forEach(b => { if (b.hover && b.action) b.action(); });
+
+  if (state === "inventory") {
+    inventoryButtons.forEach(b => { if (b.hover && b.action) b.action(); });
+  }
+});
+
+document.addEventListener("keydown", e => {
+  if ((e.key === "Escape" || e.key.toLowerCase() === "p") && (state === "playing" || state === "paused")) {
+    e.preventDefault();
+    togglePause();
+    return;
+  }
+
+  if (state !== "playing") return;
+
+  if (e.key === "ArrowLeft" || e.key === "a") playerX = Math.max(0, playerX - moveSpeed);
+  if (e.key === "ArrowRight" || e.key === "d") playerX = Math.min(39, playerX + moveSpeed);
+  if (e.key === " " || e.key === "ArrowUp") { e.preventDefault(); shoot(); }
+});
+
+// Init
+loadProgress();
+loop();
+</script>
+</body>
+</html>
