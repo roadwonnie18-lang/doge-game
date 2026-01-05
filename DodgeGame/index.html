@@ -40,6 +40,36 @@
     font-weight: bold;
     cursor: pointer;
   }
+  #settingsMenu {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 400px;
+    padding: 20px;
+    background: #000;
+    border: 3px solid #0f0;
+    color: #0f0;
+    font-family: monospace;
+    font-size: 18px;
+    display: none;
+    flex-direction: column;
+    gap: 15px;
+    box-shadow: 0 0 20px #0f0;
+    z-index: 100;
+  }
+  #settingsMenu button {
+    background: #0f0;
+    color: #000;
+    border: none;
+    padding: 10px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  #settingsMenu button.danger {
+    background: #f00;
+    color: #fff;
+  }
 </style>
 </head>
 <body>
@@ -54,7 +84,25 @@
   <input type="number" id="coinInput" placeholder="e.g. 5000" min="1">
   <div style="display:flex; gap:10px; margin-top:10px;">
     <button id="addCoinsBtn">ADD COINS</button>
+    <button id="unlockAllBtn">UNLOCK ALL</button>
+  </div>
+  <div style="display:flex; gap:10px; margin-top:5px;">
     <button id="closeDevBtn">CLOSE</button>
+  </div>
+</div>
+
+<!-- Settings Menu -->
+<div id="settingsMenu">
+  <div style="text-align:center; font-size:22px;">SETTINGS</div>
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+    <span>Music:</span>
+    <button id="toggleMusicBtn" style="width:120px;">MUTE</button>
+  </div>
+  <div style="display:flex; gap:10px; margin-top:10px;">
+    <button id="resetProgressBtn" class="danger">RESET PROGRESS</button>
+  </div>
+  <div style="display:flex; gap:10px; margin-top:5px;">
+    <button id="closeSettingsBtn">CLOSE</button>
   </div>
 </div>
 
@@ -66,7 +114,12 @@ const scoreSound = document.getElementById("scoreSound");
 const devConsole = document.getElementById("devConsole");
 const coinInput = document.getElementById("coinInput");
 const addCoinsBtn = document.getElementById("addCoinsBtn");
+const unlockAllBtn = document.getElementById("unlockAllBtn");
 const closeDevBtn = document.getElementById("closeDevBtn");
+const settingsMenu = document.getElementById("settingsMenu");
+const toggleMusicBtn = document.getElementById("toggleMusicBtn");
+const resetProgressBtn = document.getElementById("resetProgressBtn");
+const closeSettingsBtn = document.getElementById("closeSettingsBtn");
 
 // ---------- GAME STATE ----------
 let state = "start";
@@ -81,6 +134,7 @@ let inventory = [];
 let buttons = [];
 let inventoryButtons = [];
 let audioUnlocked = false;
+let musicMuted = false;
 
 // ---------- GUNS ----------
 let currentGun = { name: "Pistol", shootCooldown: 300 };
@@ -97,16 +151,28 @@ let maxEnemies = 10;
 function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
-  bgMusic.volume = 0.5;
+  bgMusic.volume = musicMuted ? 0 : 0.5;
   bgMusic.play().catch(()=>{});
 }
 document.addEventListener("click", unlockAudio, {once:true});
 
+function toggleMute() {
+  musicMuted = !musicMuted;
+  bgMusic.volume = musicMuted ? 0 : 0.5;
+  toggleMusicBtn.textContent = musicMuted ? "UNMUTE" : "MUTE";
+  saveProgress();
+}
+
+function updateMusicButton() {
+  toggleMusicBtn.textContent = musicMuted ? "UNMUTE" : "MUTE";
+}
+
 // ---------- SAVE / LOAD ----------
 function saveProgress() {
-  const data = { coins, inventory, moveSpeed, playerHat, currentGun };
+  const data = { coins, inventory, moveSpeed, playerHat, currentGun, musicMuted };
   localStorage.setItem("dodgeGameData", JSON.stringify(data));
 }
+
 function loadProgress() {
   const saved = localStorage.getItem("dodgeGameData");
   if (!saved) return;
@@ -115,6 +181,10 @@ function loadProgress() {
   moveSpeed = data.moveSpeed ?? 1;
   playerHat = data.playerHat ?? null;
   currentGun = data.currentGun ?? { name: "Pistol", shootCooldown: 300 };
+  musicMuted = data.musicMuted ?? false;
+  if (musicMuted) {
+    bgMusic.volume = 0;
+  }
   inventory = (data.inventory || []).map(i => {
     if (i.type === "boost") return { name: i.name, type: i.type, action: () => { moveSpeed = 2; } };
     if (i.type === "hat") return { name: i.name, type: i.type, action: () => { playerHat = { name: i.name }; } };
@@ -123,6 +193,25 @@ function loadProgress() {
     }
     return i;
   });
+}
+
+function resetProgress() {
+  if (confirm("Are you sure you want to reset ALL progress? This cannot be undone!")) {
+    localStorage.removeItem("dodgeGameData");
+    coins = 0;
+    inventory = [];
+    moveSpeed = 1;
+    playerHat = null;
+    currentGun = { name: "Pistol", shootCooldown: 300 };
+    musicMuted = false;
+    bgMusic.volume = 0.5;
+    updateMusicButton();
+    settingsMenu.style.display = "none";
+    alert("Progress has been reset!");
+    if (state === "gameover" || state === "shop" || state === "inventory") {
+      state = "start";
+    }
+  }
 }
 
 // ---------- DEVELOPER CONSOLE ----------
@@ -146,6 +235,27 @@ addCoinsBtn.onclick = () => {
   }
 };
 
+unlockAllBtn.onclick = () => {
+  // Add all items to inventory if not already there
+  const allItems = [
+    {name:"Rifle",type:"gun",shootCooldown:200,action:()=>{currentGun={name:"Rifle",shootCooldown:200};}},
+    {name:"Shotgun",type:"gun",shootCooldown:500,action:()=>{currentGun={name:"Shotgun",shootCooldown:500};}},
+    {name:"Minigun",type:"gun",shootCooldown:50,action:()=>{currentGun={name:"Minigun",shootCooldown:50};}},
+    {name:"Baseball Cap",type:"hat",action:()=>playerHat={name:"Baseball Cap"}},
+    {name:"Wizard Hat",type:"hat",action:()=>playerHat={name:"Wizard Hat"}},
+    {name:"Crown",type:"hat",action:()=>playerHat={name:"Crown"}}
+  ];
+  
+  allItems.forEach(item => {
+    if (!inventory.find(i => i.name === item.name)) {
+      inventory.push(item);
+    }
+  });
+  
+  saveProgress();
+  alert("All items unlocked!");
+};
+
 closeDevBtn.onclick = () => {
   devConsole.style.display = "none";
 };
@@ -162,6 +272,24 @@ document.addEventListener("keydown", e => {
     }
   }
 });
+
+// ---------- SETTINGS MENU ----------
+toggleMusicBtn.onclick = () => {
+  toggleMute();
+};
+
+resetProgressBtn.onclick = () => {
+  resetProgress();
+};
+
+closeSettingsBtn.onclick = () => {
+  settingsMenu.style.display = "none";
+};
+
+function openSettings() {
+  updateMusicButton();
+  settingsMenu.style.display = "flex";
+}
 
 // ---------- PAUSE ----------
 function togglePause() {
@@ -232,9 +360,11 @@ function updateEnemies() {
 function shoot() {
   if (!canShoot) return;
   if (currentGun.name === "Shotgun") {
-    bullets.push({x: playerX * 20 + 5, y: 560, speed: 6});
-    bullets.push({x: playerX * 20 + 10, y: 560, speed: 6});
-    bullets.push({x: playerX * 20 + 15, y: 560, speed: 6});
+    // Spread across 4 tiles (80 pixels total width)
+    bullets.push({x: playerX * 20, y: 560, speed: 6});
+    bullets.push({x: playerX * 20 + 7, y: 560, speed: 6});
+    bullets.push({x: playerX * 20 + 13, y: 560, speed: 6});
+    bullets.push({x: playerX * 20 + 20, y: 560, speed: 6});
   } else if (currentGun.name === "Minigun") {
     bullets.push({x: playerX * 20 + 10, y: 560, speed: 8});
   } else {
@@ -332,9 +462,10 @@ function drawButton(b) {
 // ---------- MENUS ----------
 function setupGameOver() {
   buttons = [
-    {x:300, y:360, w:200, h:50, text:"PLAY AGAIN", action:startGame},
-    {x:300, y:430, w:200, h:50, text:"SHOP", action:()=>{state="shop";setupShop();}},
-    {x:300, y:500, w:200, h:50, text:"INVENTORY", action:()=>{state="inventory";setupInventory();}}
+    {x:300, y:320, w:200, h:50, text:"PLAY AGAIN", action:startGame},
+    {x:300, y:390, w:200, h:50, text:"SHOP", action:()=>{state="shop";setupShop();}},
+    {x:300, y:460, w:200, h:50, text:"INVENTORY", action:()=>{state="inventory";setupInventory();}},
+    {x:300, y:530, w:200, h:50, text:"SETTINGS", action:openSettings}
   ];
 }
 
@@ -344,10 +475,9 @@ function setupShop() {
     {x:200, y:180, w:400, h:50, text:"Rifle (50 coins)", action:()=>{if(inventory.find(i=>i.name==="Rifle")||coins<50)return;inventory.push({name:"Rifle",type:"gun",shootCooldown:200,action:()=>{currentGun={name:"Rifle",shootCooldown:200};}});currentGun={name:"Rifle",shootCooldown:200};coins-=50;saveProgress();}},
     {x:200, y:240, w:400, h:50, text:"Shotgun (70 coins)", action:()=>{if(inventory.find(i=>i.name==="Shotgun")||coins<70)return;inventory.push({name:"Shotgun",type:"gun",shootCooldown:500,action:()=>{currentGun={name:"Shotgun",shootCooldown:500};}});currentGun={name:"Shotgun",shootCooldown:500};coins-=70;saveProgress();}},
     {x:200, y:300, w:400, h:50, text:"Minigun (1000 coins)", action:()=>{if(inventory.find(i=>i.name==="Minigun")||coins<1000)return;inventory.push({name:"Minigun",type:"gun",shootCooldown:50,action:()=>{currentGun={name:"Minigun",shootCooldown:50};}});currentGun={name:"Minigun",shootCooldown:50};coins-=1000;saveProgress();}},
-    {x:200, y:360, w:400, h:50, text:"Speed Boost (20 coins)", action:()=>{if(inventory.find(i=>i.name==="Speed Boost")||coins<20)return;inventory.push({name:"Speed Boost",type:"boost",action:()=>moveSpeed=2});moveSpeed=2;coins-=20;saveProgress();}},
-    {x:200, y:420, w:400, h:50, text:"Baseball Cap (5 coins)", action:()=>{if(inventory.find(i=>i.name==="Baseball Cap")||coins<5)return;inventory.push({name:"Baseball Cap",type:"hat",action:()=>playerHat={name:"Baseball Cap"}});playerHat={name:"Baseball Cap"};coins-=5;saveProgress();}},
-    {x:200, y:480, w:400, h:50, text:"Wizard Hat (8 coins)", action:()=>{if(inventory.find(i=>i.name==="Wizard Hat")||coins<8)return;inventory.push({name:"Wizard Hat",type:"hat",action:()=>playerHat={name:"Wizard Hat"}});playerHat={name:"Wizard Hat"};coins-=8;saveProgress();}},
-    {x:300, y:540, w:200, h:40, text:"BACK", action:()=>{state="gameover";setupGameOver();}}
+    {x:200, y:360, w:400, h:50, text:"Baseball Cap (5 coins)", action:()=>{if(inventory.find(i=>i.name==="Baseball Cap")||coins<5)return;inventory.push({name:"Baseball Cap",type:"hat",action:()=>playerHat={name:"Baseball Cap"}});playerHat={name:"Baseball Cap"};coins-=5;saveProgress();}},
+    {x:200, y:420, w:400, h:50, text:"Wizard Hat (8 coins)", action:()=>{if(inventory.find(i=>i.name==="Wizard Hat")||coins<8)return;inventory.push({name:"Wizard Hat",type:"hat",action:()=>playerHat={name:"Wizard Hat"}});playerHat={name:"Wizard Hat"};coins-=8;saveProgress();}},
+    {x:300, y:480, w:200, h:40, text:"BACK", action:()=>{state="gameover";setupGameOver();}}
   ];
 }
 
@@ -421,7 +551,7 @@ function loop() {
     ctx.fillStyle = "#fff";
     ctx.font = "20px monospace";
     ctx.fillText("Score: " + score, 10, 30);
-    ctx.fillText("Coins: " + coins, 160, 30);  // Moved to the right!
+    ctx.fillText("Coins: " + coins, 160, 30);
 
     if (state === "paused") {
       drawPauseMenu();
@@ -467,6 +597,15 @@ function loop() {
     ctx.font = "28px monospace";
     ctx.fillText("Click to Start", 400, 340);
     ctx.textAlign = "left";
+    
+    // Settings button
+    ctx.fillStyle = "#0f0";
+    ctx.fillRect(10, 10, 120, 40);
+    ctx.strokeStyle = "#0f0";
+    ctx.strokeRect(10, 10, 120, 40);
+    ctx.fillStyle = "#000";
+    ctx.font = "20px monospace";
+    ctx.fillText("SETTINGS", 18, 37);
   }
 
   requestAnimationFrame(loop);
@@ -486,6 +625,16 @@ canvas.addEventListener("mousemove", e => {
 });
 
 canvas.addEventListener("click", e => {
+  const r = canvas.getBoundingClientRect();
+  const mx = e.clientX - r.left;
+  const my = e.clientY - r.top;
+  
+  // Check settings button on start screen
+  if (state === "start" && mx >= 10 && mx <= 130 && my >= 10 && my <= 50) {
+    openSettings();
+    return;
+  }
+  
   if (state === "start") {
     startGame();
     return;
@@ -517,4 +666,4 @@ loadProgress();
 loop();
 </script>
 </body>
-</html> 
+</html>
